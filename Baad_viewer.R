@@ -9,6 +9,16 @@ library(lubridate)
 baad <- baad.data::baad_data()
 df <- baad$data
 
+# Extract variable metadata to create mapping between short and long names
+var_meta <- baad$dictionary
+print(str(var_meta))
+varname_mapping <- var_meta %>% select(variable, label)
+
+# Save variable mapping to CSV for reference
+timestamp <- format(Sys.time(), "%Y%m%d_%H%M")
+mapping_filename <- paste0("Baad_varname_mapping_", timestamp, ".csv")
+write.csv(varname_mapping, mapping_filename, row.names = FALSE)
+
 # Add year column using best available info
 if ("year" %in% colnames(df)) {
   df$year_actual <- df$year
@@ -39,8 +49,7 @@ age_gradient_list <- cell_time_series %>%
   group_by(lat_bin, lon_bin) %>%
   group_split()
 
-# Output file name with timestamp
-timestamp <- format(Sys.time(), "%Y%m%d_%H%M")
+# Output file names with timestamp
 pdf_filename <- paste0("Baad_output_", timestamp, ".pdf")
 csv_filename <- paste0("Baad_output_", timestamp, ".csv")
 
@@ -62,7 +71,7 @@ for (cell in age_gradient_list) {
   cell$cell_id <- cell_id
   age_gradient_master <- rbind(age_gradient_master, cell)
 
-  # Print table summary
+  # Print table summary for reference
   print(cell[, c("age", "year_actual", "pft", "species")])
 
   # Plot all numeric variables vs age
@@ -72,27 +81,42 @@ for (cell in age_gradient_list) {
     colnames()
 
   for (var in numeric_vars) {
+    # Skip variable if all values are NA in this cell
+    if (all(is.na(cell[[var]]))) {
+      next
+    }
+
+    # Find long variable name (label), fallback to short name if none
+    long_name <- varname_mapping$label[varname_mapping$variable == var]
+    if (length(long_name) == 0 || is.na(long_name) || long_name == "") {
+      long_name <- var
+    }
+
+    # Skip if long_name is NA or empty
+    if (is.na(long_name) || long_name == "") next
+
     p <- ggplot(cell, aes_string(x = "age", y = var)) +
       geom_point(alpha = 0.6) +
       geom_smooth(method = "loess", formula = y ~ x, se = FALSE, color = "steelblue") +
       labs(
         title = paste("Grid Cell:", cell_id),
-        subtitle = paste("Variable:", var),
+        subtitle = paste("Variable:", long_name),
         x = "Age",
-        y = var
+        y = long_name
       ) +
       theme_minimal()
+
     print(p)
   }
-
-  # You could optionally plot categorical summaries (like PFT) here
 }
 
 # Close the PDF device
 dev.off()
 
-# Save master CSV
+# Save master CSV of all filtered data
 write.csv(age_gradient_master, csv_filename, row.names = FALSE)
 
 # Final message
-cat("\n✅ All done.\nSaved outputs:\n - PDF plots: ", pdf_filename, "\n - Age-gradient data: ", csv_filename, "\n")
+cat("\n✅ All done.\nSaved outputs:\n - PDF plots: ", pdf_filename,
+    "\n - Age-gradient data: ", csv_filename,
+    "\n - Variable name mapping: ", mapping_filename, "\n")
