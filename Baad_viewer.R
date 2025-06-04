@@ -9,15 +9,14 @@ library(lubridate)
 baad <- baad.data::baad_data()
 df <- baad$data
 
-# Extract variable metadata to create mapping between short and long names
-var_meta <- baad$dictionary
-print(str(var_meta))
-varname_mapping <- var_meta %>% select(variable, label)
+# Extract variable metadata with units and description
+var_meta <- baad$dictionary %>%
+  select(variable, label, units, description)
 
 # Save variable mapping to CSV for reference
 timestamp <- format(Sys.time(), "%Y%m%d_%H%M")
 mapping_filename <- paste0("Baad_varname_mapping_", timestamp, ".csv")
-write.csv(varname_mapping, mapping_filename, row.names = FALSE)
+write.csv(var_meta, mapping_filename, row.names = FALSE)
 
 # Add year column using best available info
 if ("year" %in% colnames(df)) {
@@ -74,7 +73,7 @@ for (cell in age_gradient_list) {
   # Print table summary for reference
   print(cell[, c("age", "year_actual", "pft", "species")])
 
-  # Plot all numeric variables vs age
+  # Identify numeric variables (excluding coords and bins)
   numeric_vars <- cell %>%
     select(where(is.numeric)) %>%
     select(-latitude, -longitude, -lat_bin, -lon_bin) %>%
@@ -86,25 +85,62 @@ for (cell in age_gradient_list) {
       next
     }
 
-    # Find long variable name (label), fallback to short name if none
-    long_name <- varname_mapping$label[varname_mapping$variable == var]
-    if (length(long_name) == 0 || is.na(long_name) || long_name == "") {
-      long_name <- var
+    # Lookup metadata for variable
+    meta_row <- var_meta %>% filter(variable == var)
+
+    # Fallback to variable name if metadata missing
+    long_name <- if (nrow(meta_row) > 0 && !is.na(meta_row$label) && meta_row$label != "") {
+      meta_row$label
+    } else {
+      var
     }
 
-    # Skip if long_name is NA or empty
-    if (is.na(long_name) || long_name == "") next
+    unit <- if (nrow(meta_row) > 0 && !is.na(meta_row$units) && meta_row$units != "") {
+      meta_row$units
+    } else {
+      ""
+    }
 
-    p <- ggplot(cell, aes_string(x = "age", y = var)) +
+    description <- if (nrow(meta_row) > 0 && !is.na(meta_row$description) && meta_row$description != "") {
+      meta_row$description
+    } else {
+      ""
+    }
+
+    # Compose y-axis label with units
+    y_label <- if (unit != "") {
+      paste0(long_name, " (", unit, ")")
+    } else {
+      long_name
+    }
+
+    # Compose subtitle with description if available
+    subtitle_text <- if (description != "") {
+      paste("Description:", description)
+    } else {
+      ""
+    }
+
+    # === Use 'pft' or 'species' as grouping variable ===
+    group_var <- "pft"  # Change to "species" if preferred
+
+    p <- ggplot(cell, aes(x = age, y = .data[[var]], color = .data[[group_var]])) +
       geom_point(alpha = 0.6) +
-      geom_smooth(method = "loess", formula = y ~ x, se = FALSE, color = "steelblue") +
+      geom_smooth(
+        method = "loess",
+        formula = y ~ x,
+        se = FALSE,
+        linewidth = 1
+      ) +
       labs(
         title = paste("Grid Cell:", cell_id),
-        subtitle = paste("Variable:", long_name),
+        subtitle = subtitle_text,
         x = "Age",
-        y = long_name
+        y = y_label,
+        color = toupper(group_var)
       ) +
-      theme_minimal()
+      theme_minimal() +
+      theme(legend.position = "bottom")
 
     print(p)
   }
